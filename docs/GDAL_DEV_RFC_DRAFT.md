@@ -53,6 +53,25 @@ Size: about 10 000 lines of C++17 in 15 files, plus the documentation page and
 This is the main question for the list. The prepared branch adds `frmts/nisar` as a separate
 driver. The alternative is a subdriver in `frmts/hdf5`, like BAG, S-102, S-104 and S-111.
 
+GDAL's HDF5 driver already has some NISAR handling, which this proposal overlaps with. In
+`HDF5ImageDataset` (`frmts/hdf5/hdf5imagedataset.cpp`), a 2-D raster gets its SRS from the
+dataset named by its CF `grid_mapping` attribute (`epsg_code`, else the CF attributes), and,
+when the root attribute `mission_name` is `NISAR`, its geotransform from the sibling
+`xCoordinates` / `yCoordinates`. This is tested by `test_hdf5_NISAR_level_2_epsg_code` and
+`test_hdf5_NISAR_level_2_spatial_ref` in `autotest/gdrivers/hdf5.py`. What we observed with
+both drivers built from the prepared branch (GDAL 3.14.0dev):
+
+- The two HDF5 tests still pass. Their files (`fake_NISAR_L2_*.h5`) have no
+  `/science/<LSAR|SSAR>/identification` group, so the NISAR driver does not claim them.
+- A real granule opened by its bare file name now goes to the NISAR driver, so the
+  subdataset names start with `NISAR:` instead of `HDF5:`. `HDF5:"<file>"://<path>` names
+  still open with the HDF5 driver. **This changes what existing users of NISAR files get
+  from `gdal.Open(<file>)`.**
+- On a real S-band L2 GCOV granule the two drivers return the same pixels, geotransform,
+  SRS, data type, nodata value and block size for the seven raster layers we compared.
+  The HDF5 driver has no equivalent of the L1 GCPs, the masks, the `INST` / `FREQ` / `POL`
+  selection or the metadata-cube interpolation.
+
 | | `frmts/nisar` (as prepared) | subdriver in `frmts/hdf5` |
 | --- | --- | --- |
 | Code reuse | Reuses nothing from `HDF5Dataset`. Carries a copy of the VFL (`hdf5vfl.{h,cpp}`, MIT notice kept) and its own HDF5 global lock | Shares `hdf5vfl.h`, `HDF5_GLOBAL_LOCK()` and the build-time thread-safety detection; the copies go away |
@@ -112,7 +131,9 @@ cannot be brought within the policy, say so and ask how the PSC wants to proceed
 ## Questions
 
 1. Is the driver of interest for GDAL, and is an RFC required or is a pull request enough?
-2. `frmts/nisar` or a subdriver of `frmts/hdf5`?
+2. `frmts/nisar` or a subdriver of `frmts/hdf5`? In either case, should a bare NISAR file
+   name keep opening with the HDF5 driver, and should the NISAR L2 handling in
+   `HDF5ImageDataset` stay as it is?
 3. Apache-2.0 in-tree, or MIT?
 4. Is OSGeo/gdal-test-datasets the right place for the real-granule subsets, and what is
    an acceptable size?

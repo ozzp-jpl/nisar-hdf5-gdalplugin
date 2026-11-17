@@ -81,6 +81,10 @@ a human must be the primary author, responsible for every line.
   - HDF5 subdriver: matches how GDAL handles other HDF5 profiles, shares the HDF5 global
     lock, the `hdf5drivercore` deferred-plugin machinery and `hdf5vfl.h` (the copied VFL
     could be dropped), one HDF5 plugin to package.
+  - to settle with the PSC either way: GDAL's HDF5 driver already georeferences NISAR L2
+    rasters (`mission_name` = `NISAR` + `grid_mapping`, tested in `autotest/gdrivers/hdf5.py`),
+    and with both drivers present a bare granule name opens with the NISAR driver, so its
+    subdataset names change from `HDF5:` to `NISAR:`.
 
 ## 4. Test data hosting
 
