@@ -77,6 +77,65 @@ bool NisarNeedsHDF5GlobalLock()
 #endif
 }
 
+// Split NISAR:"filename":/hdf5/path, NISAR:filename:/hdf5/path, NISAR:filename
+// or a plain file name. In the unquoted form the last colon is the separator,
+// unless it belongs to the file name: URL scheme ("://"), URL authority
+// (port, as in http://host:8080/x.h5) or Windows drive letter ("C:").
+bool NisarSplitConnectionString(const char *pszInput, std::string &osFilename,
+                                std::string &osHDF5Path)
+{
+    osFilename.clear();
+    osHDF5Path.clear();
+    if (!STARTS_WITH_CI(pszInput, "NISAR:"))
+    {
+        osFilename = pszInput;
+        return !osFilename.empty();
+    }
+
+    const std::string osId(pszInput + strlen("NISAR:"));
+    const size_t nEndQuote =
+        osId.empty() || osId[0] != '"' ? std::string::npos : osId.find('"', 1);
+    if (nEndQuote != std::string::npos)
+    {
+        osFilename = osId.substr(1, nEndQuote - 1);
+        if (osId.compare(nEndQuote + 1, 1, ":") == 0)
+            osHDF5Path = osId.substr(nEndQuote + 2);
+        return !osFilename.empty();
+    }
+
+    const size_t nColon = osId.rfind(':');
+    bool bIsSeparator = nColon != std::string::npos && nColon + 1 < osId.size();
+    if (bIsSeparator)
+    {
+        const size_t nScheme = osId.rfind("://", nColon);
+        if (nScheme == nColon)
+        {
+            bIsSeparator = false;
+        }
+        else if (nScheme != std::string::npos)
+        {
+            // Inside the authority, i.e. before the first slash of the path
+            const size_t nPathStart = osId.find('/', nScheme + 3);
+            bIsSeparator =
+                nPathStart != std::string::npos && nPathStart < nColon;
+        }
+        else if (nColon == 1 && isalpha(static_cast<unsigned char>(osId[0])))
+        {
+            bIsSeparator = false;
+        }
+    }
+    if (bIsSeparator)
+    {
+        osFilename = osId.substr(0, nColon);
+        osHDF5Path = osId.substr(nColon + 1);
+    }
+    else
+    {
+        osFilename = osId;
+    }
+    return !osFilename.empty();
+}
+
 // Any GDAL virtual file system path (/vsimem/, /vsizip/, /vsicurl/, ...) is
 // read through the VSI Virtual File Layer; plain local paths keep the
 // default HDF5 driver.
@@ -3488,58 +3547,13 @@ GDALDataset *NisarDataset::Open(GDALOpenInfo *poOpenInfo)
         return nullptr;
     }
 
-    // NISAR:"filename":/hdf5/path, NISAR:filename:/hdf5/path, NISAR:filename
-    // or a plain filename. A colon inside the file name (URL scheme or port,
-    // Windows drive letter) is not a subdataset separator.
-    if (!bHasPrefix)
-    {
-        pszActualFilename = CPLStrdup(pszDataIdentifier);
-    }
-    else if (pszDataIdentifier[0] == '"' &&
-             strchr(pszDataIdentifier + 1, '"') != nullptr)
-    {
-        const char *pszEndQuote = strchr(pszDataIdentifier + 1, '"');
-        const size_t nFilenameLen = pszEndQuote - (pszDataIdentifier + 1);
-        pszActualFilename = static_cast<char *>(CPLMalloc(nFilenameLen + 1));
-        memcpy(pszActualFilename, pszDataIdentifier + 1, nFilenameLen);
-        pszActualFilename[nFilenameLen] = '\0';
-        if (pszEndQuote[1] == ':' && pszEndQuote[2] != '\0')
-            pszSubdatasetPath = pszEndQuote + 2;
-    }
-    else
-    {
-        const char *pszLastColon = strrchr(pszDataIdentifier, ':');
-        bool bIsSeparator = false;
-        if (pszLastColon != nullptr && pszLastColon[1] != '\0')
-        {
-            const size_t nFilenameLen = pszLastColon - pszDataIdentifier;
-            const std::string osCandidate(pszDataIdentifier, nFilenameLen);
-            const bool bIsDriveLetter =
-                nFilenameLen == 1 &&
-                isalpha(static_cast<unsigned char>(pszDataIdentifier[0]));
-            if (pszLastColon[1] == '/')
-                // "://" is a URL scheme, "C:/" a drive letter
-                bIsSeparator = pszLastColon[2] != '/' && !bIsDriveLetter;
-            else
-                // Relative HDF5 path: only after a .h5 file name, so that
-                // "http://host:8080/x.h5" stays a file name.
-                bIsSeparator =
-                    EQUAL(NisarGetExtension(osCandidate.c_str()).c_str(), "h5");
-        }
-        if (bIsSeparator)
-        {
-            pszSubdatasetPath = pszLastColon + 1;
-            const size_t nFilenameLen = pszLastColon - pszDataIdentifier;
-            pszActualFilename =
-                static_cast<char *>(CPLMalloc(nFilenameLen + 1));
-            memcpy(pszActualFilename, pszDataIdentifier, nFilenameLen);
-            pszActualFilename[nFilenameLen] = '\0';
-        }
-        else
-        {
-            pszActualFilename = CPLStrdup(pszDataIdentifier);
-        }
-    }
+    std::string osActualFilename;
+    std::string osSubdatasetPath;
+    NisarSplitConnectionString(pszFullInput, osActualFilename,
+                               osSubdatasetPath);
+    pszActualFilename = CPLStrdup(osActualFilename.c_str());
+    if (!osSubdatasetPath.empty())
+        pszSubdatasetPath = osSubdatasetPath.c_str();
 
     // Mirror Identify(): an explicit NISAR: prefix claims the file whatever
     // its extension; only unprefixed names are gated on .h5.
