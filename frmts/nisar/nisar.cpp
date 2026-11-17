@@ -22,15 +22,16 @@
 #include "nisardataset.h"
 #include "gdal_version.h"
 #include "hdf5vfl.h"
+#include "nisar_version.h"
 
 CPL_C_START
 void CPL_DLL GDALRegister_NISAR();
-#ifdef NISAR_DRIVER_VERSION
+#ifdef NISAR_STANDALONE_PLUGIN
 int CPL_DLL GDALGetPluginVersion();
 #endif
 CPL_C_END
 
-#ifdef NISAR_DRIVER_VERSION
+#ifdef NISAR_STANDALONE_PLUGIN
 int GDALGetPluginVersion()
 {
     return GDAL_VERSION_NUM;
@@ -56,11 +57,14 @@ void GDALRegister_NISAR()
     // with this driver in multi-threaded scenarios.
     poDriver->SetMetadataItem("GDAL_THREAD_SAFE", "YES");
     poDriver->SetMetadataItem("GDAL_RAW_BINARY_LAYOUT", "YES");
-#ifdef NISAR_DRIVER_VERSION
-    // Only defined by the standalone plugin build (frmts/nisar/CMakeLists.txt).
+#ifdef NISAR_STANDALONE_PLUGIN
+    // The standalone plugin (frmts/nisar/CMakeLists.txt) also reports when it
+    // was built; in-tree builds stay reproducible.
     poDriver->SetMetadataItem("DRIVER_VERSION",
                               "v" NISAR_DRIVER_VERSION " (Build Date: " __DATE__
                               " " __TIME__ ")");
+#else
+    poDriver->SetMetadataItem("DRIVER_VERSION", "v" NISAR_DRIVER_VERSION);
 #endif
     poDriver->SetMetadataItem(GDAL_DCAP_RASTER, "YES");
     poDriver->SetMetadataItem(GDAL_DMD_LONGNAME, "NISAR HDF5");

@@ -65,26 +65,35 @@ using NisarMetadataList = char **;
 
 class NisarRasterBand;
 
+// Serialises libhdf5 calls when the library is not thread-safe, as
+// HDF5_GLOBAL_LOCK() does in GDAL's frmts/hdf5. Taken at the top of every
+// entry point that reaches libhdf5 (the mutex is recursive, so helpers called
+// from there need no lock of their own).
+//
+// Same build switch as frmts/hdf5: -DGDAL_ENABLE_HDF5_GLOBAL_LOCK=ON defines
+// ENABLE_HDF5_GLOBAL_LOCK (always lock), =OFF defines DISABLE_HDF5_GLOBAL_LOCK
+// (never lock). When the switch is not set, the decision is taken at run time
+// from H5is_library_threadsafe().
+bool NisarNeedsHDF5GlobalLock();
+std::recursive_mutex &NisarGetHDF5GlobalMutex();
+
+class NisarHDF5GlobalLock
+{
+    std::unique_lock<std::recursive_mutex> m_oLock;
+
+  public:
+    NisarHDF5GlobalLock() : m_oLock(NisarGetHDF5GlobalMutex(), std::defer_lock)
+    {
+        if (NisarNeedsHDF5GlobalLock())
+            m_oLock.lock();
+    }
+};
+
+#define NISAR_HDF5_GLOBAL_LOCK() NisarHDF5GlobalLock oHDF5GlobalLock
+
 // Nearest ancestor group of sPath (its parent first) holding every named member; "" if none.
 std::string NisarFindGroupUpward(hid_t hFile, const std::string &sPath,
                                  const std::vector<const char *> &apszNames);
-
-// DEBUGGING: PRINT GDAL VERSION VALUES
-// This uses a helper macro to convert numbers to strings for printing
-//#define STR_HELPER(x) #x
-//#define STR(x) STR_HELPER(x)
-
-//#ifdef GDAL_VERSION_NUM
-//    #pragma message("-------------------------------------------------------")
-//    #pragma message("DEBUG: GDAL_VERSION_NUM   = " STR(GDAL_VERSION_NUM))
-//    #pragma message("DEBUG: GDAL_VERSION_MAJOR = " STR(GDAL_VERSION_MAJOR))
-//    #pragma message("DEBUG: GDAL_VERSION_MINOR = " STR(GDAL_VERSION_MINOR))
-//    #pragma message("-------------------------------------------------------")
-//#else
-//    #pragma message("-------------------------------------------------------")
-//    #pragma message("ERROR: GDAL_VERSION_NUM is NOT defined!")
-//    #pragma message("-------------------------------------------------------")
-//#endif
 
 // Compatibility shim for GDAL < 3.12
 // GDALGeoTransform class was introduced in 3.12. Before that, it was just raw double[6].
@@ -92,10 +101,7 @@ std::string NisarFindGroupUpward(hid_t hFile, const std::string &sPath,
 // We check Major/Minor directly to avoid macro expansion issues with GDAL_VERSION_NUM
 #if GDAL_VERSION_MAJOR < 3 ||                                                  \
     (GDAL_VERSION_MAJOR == 3 && GDAL_VERSION_MINOR < 12)
-#pragma message("-> ACTIVATING LEGACY TYPEDEF for GDALGeoTransform")
 using GDALGeoTransform = std::array<double, 6>;
-#else
-#pragma message("-> SKIPPING LEGACY TYPEDEF (Assuming GDAL 3.12+ Native Class)")
 #endif
 
 /**************************************************************************/
@@ -117,6 +123,7 @@ class NisarDataset final : public GDALPamDataset
     hid_t hHDF5 = -1;
     hid_t hDataset = -1;
     char *pszFilename = nullptr;
+    std::string m_osVSIPath{};  // pszFilename as opened through VSI / HDF5
     GDALDataType eDataType = GDT_Unknown;  // Has default initializer
     char **papszSubDatasets = nullptr;     // Has default initializer
 

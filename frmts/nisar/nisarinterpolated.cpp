@@ -193,6 +193,7 @@ NisarInterpolatedDataset::NisarInterpolatedDataset()
 
 NisarInterpolatedDataset::~NisarInterpolatedDataset()
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Clean up the DEM datasets when this dataset is closed
     if (m_poAlignedDEM && m_poAlignedDEM != m_poRawDEM)
         GDALClose(m_poAlignedDEM);
@@ -415,6 +416,7 @@ bool NisarInterpolatedDataset::InitRadarGrid(NisarDataset *poCube,
                                              const std::string &sCubeGroup,
                                              const std::string &sRefPath)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     const hid_t hFile = poCube->GetHDF5Handle();
     std::vector<hsize_t> dimsX, dimsY;
     if (!NisarReadDoubles(hFile, sCubeGroup + "/slantRange", m_cubeRange) ||
@@ -615,6 +617,7 @@ bool NisarInterpolatedDataset::InitRadarGrid(NisarDataset *poCube,
 
 GDALDataset *NisarInterpolatedDataset::Open(GDALOpenInfo *poOpenInfo)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     char **papszOO = poOpenInfo->papszOpenOptions;
     const char *pszDemFile = CSLFetchNameValue(papszOO, "DEM_FILE");
     const char *pszQuantity = CSLFetchNameValue(papszOO, "QUANTITY");

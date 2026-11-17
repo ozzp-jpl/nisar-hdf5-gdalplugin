@@ -14,8 +14,9 @@ based on OSGeo/gdal `master`, 3.14.0dev) has been prepared and validated:
   anonymous `__` links. Verified with `cmake --build . --target html` (BUILD_DOCS=ON, Sphinx +
   Doxygen) - no warnings from the NISAR page - and `ctest -R doc-spelling` after adding
   `dataspace(s)` and `Kerchunk` to `doc/source/spelling_wordlist.txt`
-- `autotest/gdrivers/nisar.py` + `autotest/gdrivers/data/nisar/NISAR_L2_GCOV_synthetic.h5` (19 KB
-  static fixture, generation recipe in the test header; no h5py/numpy needed at test time).
+- `autotest/gdrivers/nisar.py` + two static synthetic fixtures in `autotest/gdrivers/data/nisar/`
+  (`NISAR_L2_GCOV_synthetic.h5`, 29 KB, and `NISAR_L1_RSLC_synthetic.h5`, 33 KB, written by
+  `generate_synthetic.py` in the same directory; no h5py/numpy needed at test time).
   Follows GDAL's automated-testing guidance: `pytestmark = require_driver("NISAR")`,
   `gdaltest.GDALTest` checksum/geotransform/SRS test, `@pytest.mark.parametrize`, independent
   test cases, file-handle leak fixture (as in `hdf5.py`), negative Identify/Open cases
@@ -23,7 +24,8 @@ based on OSGeo/gdal `master`, 3.14.0dev) has been prepared and validated:
   (`gdalplugins/gdal_NISAR.so`) both build, and `autotest/gdrivers/nisar.py` passes in both modes
   and against the standalone plugin on GDAL 3.12
 
-None of this has been posted, pushed or proposed upstream. Everything below needs a person.
+None of this has been posted, pushed or proposed upstream. Unchecked items below need a person,
+except in section 6 where the remaining technical items are listed.
 
 ## 1. GDAL AI tool policy (blocking)
 
@@ -33,35 +35,45 @@ only be used for autocomplete or repeated mechanical refactoring, any use must b
 a human must be the primary author, responsible for every line.
 
 - [ ] Decide how this policy applies to the driver itself and to the integration work prepared
-      by Devin (registration, docs, autotest, the GetMetadata/CMake fixes). Most likely the
+      by Devin (registration, docs, autotest, the GetMetadata/CMake fixes, and the section 6
+      driver changes: VSI `Identify()`, HDF5 global lock, `NISAR_EXPORT_ZARR_DIR`, connection-string
+      parsing, `nisar_version.h`). Most likely the
       upstream patch has to be rewritten or line-by-line reviewed and owned by a JPL developer.
 - [ ] Disclose AI assistance in the PR, as the policy requires.
 
 ## 2. JPL legal sign-off on licensing
 
-- [ ] License header choice. All NISAR-authored C++ sources now carry a full Caltech notice
-      modeled on GDAL's `frmts/mrf` precedent: `Copyright 2025, California Institute of
+- [x] License header choice. Approval to replace the former "ALL RIGHTS RESERVED" /
+      export-control / commercial-negotiation notice was granted (relayed by O. Pariser,
+      2026-11-16). All NISAR-authored C++ sources carry `Copyright 2025, California Institute of
       Technology. All rights reserved. U.S. Government sponsorship acknowledged.` followed by the
-      Apache-2.0 license text and `SPDX-License-Identifier: Apache-2.0`. This replaces the former
-      "ALL RIGHTS RESERVED" / export-control / commercial-negotiation notice, which granted no
-      redistribution rights and conflicted with the repo's Apache-2.0 `LICENSE`. Confirm JPL legal
-      and the software release process (open-source release approval, export-control review)
-      cover this. If upstreamed, add the block to GDAL's `LICENSE.TXT` like `frmts/mrf/*`.
+      Apache-2.0 notice and `SPDX-License-Identifier: Apache-2.0`; the Python tests and the
+      README license section use the same wording, and the README export-control paragraph is
+      gone. Keep the written approval on file; it is not stored in this repository.
+- [ ] Note on the `frmts/mrf` precedent: in GDAL, the Caltech notice of `frmts/mrf` is a
+      BSD-style (3-clause) license; the Apache-2.0 notice in that driver is Esri's. So GDAL
+      already ships Apache-2.0 driver code and a Caltech copyright block, but not a
+      Caltech + Apache-2.0 block. Word the request to the PSC accordingly.
+- [ ] On upstream acceptance, add the Caltech block to GDAL's `LICENSE.TXT` (as for
+      `frmts/mrf/*`).
 - [ ] `hdf5vfl.{h,cpp}` derive from GDAL's MIT-licensed `frmts/hdf5/hdf5vfl.h`. They keep the
       original MIT notice (Denis Nadeau, Sam Gillingham, Even Rouault) and `SPDX-License-Identifier: MIT`,
       with a Caltech line for the modifications. Confirm this is acceptable.
-- [ ] GDAL core code is MIT. Ask whether GDAL accepts an Apache-2.0 driver in-tree (some vendored
-      third-party code in GDAL is Apache-2.0, see `LICENSE.TXT`), or whether the upstream copy must
-      be relicensed to MIT.
+- [ ] GDAL core code is MIT. Ask whether GDAL accepts an Apache-2.0 driver in-tree (some code in
+      GDAL is Apache-2.0, see `LICENSE.TXT`), or whether the upstream copy must be relicensed to
+      MIT. Asked upstream; answer pending. A relicense to MIT needs a new Caltech approval.
 - [ ] `autotest/gdrivers/nisar.py` and `nisar.rst` were written with a Caltech/MIT header, matching
       GDAL autotest convention. Confirm.
 
 ## 3. gdal-dev RFC / proposal
 
-- [ ] Post to [gdal-dev](https://lists.osgeo.org/mailman/listinfo/gdal-dev) introducing the driver
-      and asking whether the PSC wants an RFC or a plain PR. Include:
-      scope (read-only, L1/L2/L3), dependencies (libhdf5 only; zlib), maintenance commitment
-      (who maintains it, for how long), test data plan, licensing.
+- [x] Draft of the post: [`docs/GDAL_DEV_RFC_DRAFT.md`](docs/GDAL_DEV_RFC_DRAFT.md) (scope,
+      dependencies, maintenance commitment, test data plan, licensing, standalone driver vs.
+      HDF5 subdriver, AI-tool disclosure).
+- [ ] A JPL developer rewrites/owns the draft, fills in the `<...>` placeholders (maintainer
+      names, duration of the commitment, minimum HDF5 version, test-data sizes and
+      redistribution rights) and posts it to
+      [gdal-dev](https://lists.osgeo.org/mailman/listinfo/gdal-dev) under their own name.
 - [ ] Decide `frmts/nisar` (separate driver, as prepared) vs. an HDF5 subdriver
       (`frmts/hdf5/nisardataset.cpp`, like BAG / S-102 / S-104 / S-111). Arguments:
   - separate driver: own `NISAR:` prefix, own open options, independent plugin, reuses
@@ -72,16 +84,21 @@ a human must be the primary author, responsible for every line.
 
 ## 4. Test data hosting
 
-- [x] GDAL CI does not install h5py, so the autotest now ships a 19 KB static fixture
-      (`autotest/gdrivers/data/nisar/NISAR_L2_GCOV_synthetic.h5`, h5py recipe in the test
-      header) instead of generating it at run time.
-- [ ] Real subsetted granules (L1 GCPs, complex, masks, metadata cubes) are too large for the
-      GDAL tree; host them in
-      [OSGeo/gdal-test-datasets](https://github.com/OSGeo/gdal-test-datasets) and mark those
-      tests `@pytest.mark.require_run_on_demand` / `slow`.
-- [ ] Add L1 (RSLC/GCP), complex (GSLC derived subdatasets), mask, metadata-cube
-      (QUANTITY/DEM_FILE) and `/vsicurl/` coverage. Confirm redistribution rights for any
-      real NISAR data used.
+- [x] GDAL CI does not install h5py, so the autotest ships static fixtures
+      (`autotest/gdrivers/data/nisar/*.h5`, regenerated with `generate_synthetic.py`) instead
+      of generating them at run time.
+- [x] L1 (RSLC swaths, GCPs), complex and derived-subdataset, mask, metadata-cube
+      (`QUANTITY`/`DEM_FILE`, L1 and L2), `/vsimem/`, `/vsizip/`, `/vsicurl/` (local test
+      server), Kerchunk-export and multi-threaded-read coverage on the synthetic fixtures:
+      47 tests pass in-tree (GDAL 3.14.0dev, builtin driver).
+- [x] Real-granule tests (RSLC, GSLC, GCOV, GUNW: subdatasets, L1 GCPs, derived subdatasets,
+      masks, interpolation, `/vsicurl/`) are written and marked
+      `@pytest.mark.require_run_on_demand` / `slow`. **They have never been run**: they
+      download from `OSGeo/gdal-test-datasets/nisar/`, which does not exist yet.
+- [ ] Produce spatial subsets of real granules (the full ones are 40 MB to 1 GB), confirm
+      redistribution rights, propose them to
+      [OSGeo/gdal-test-datasets](https://github.com/OSGeo/gdal-test-datasets), then set the
+      file names in `REAL_GRANULES` in `nisar.py` and run the tests with `RUN_ON_DEMAND=YES`.
 
 ## 5. CLA / commit authorship
 
@@ -101,23 +118,37 @@ These are not blocking for the standalone plugin, but GDAL reviewers will likely
       allocations use `VSI_MALLOC2_VERBOSE`, large `std::vector` sizes are guarded against
       `std::bad_alloc`, classes with pointer members use `CPL_DISALLOW_COPY_ASSIGN`, no
       old-style casts, lower-case `.cpp`/`.h` filenames, `.clang-format` applied.
-- [ ] Remove the `#pragma message` lines and the commented-out debug pragmas in
-      `nisardataset.h` (they print on every compile).
+- [x] `#pragma message` lines and commented-out debug pragmas removed from `nisardataset.h`.
 - [ ] Deferred plugin loading: GDAL's HDF5 driver splits `Identify()` into
       `hdf5drivercore.cpp` (`CORE_SOURCES`, `NO_SHARED_SYMBOL_WITH_CORE`) so a plugin is only
       loaded when needed. `NisarDataset::Identify()` calls `H5Fopen`, so it cannot be moved into
       core as is.
-- [ ] `Identify()` opens local files with `H5Fopen` directly (not via VSI), so `/vsimem/` and
-      other non-network virtual paths are not identified.
-- [ ] Thread safety: GDAL's HDF5 driver uses a global HDF5 lock when libhdf5 is not
-      thread-safe (`GDAL_ENABLE_HDF5_GLOBAL_LOCK`). The NISAR driver decompresses in parallel
-      but has no such lock.
-- [ ] `NISAR_EXPORT_ZARR` writes to `/tmp`; upstream will expect a user-given path or removal.
+- [x] `Identify()` opens local files and non-network virtual paths (`/vsimem/`, `/vsizip/`,
+      ...) through the VSI virtual file driver and checks for
+      `/science/{LSAR,SSAR}/identification`.
+- [ ] `Identify()` still claims network files (`/vsicurl/`, `/vsis3/`, `http(s)://`, `s3://`)
+      from their name (it must contain `NISAR`) instead of opening them, to avoid range
+      requests on every remote HDF5 file GDAL probes. Reviewers may ask for a content check;
+      the `NISAR:` prefix always works.
+- [x] Thread safety: libhdf5 calls are serialised by a global recursive lock
+      (`NISAR_HDF5_GLOBAL_LOCK()`), taken when `H5is_library_threadsafe()` reports a
+      non-thread-safe library, or forced with `-DGDAL_ENABLE_HDF5_GLOBAL_LOCK=ON|OFF` as in
+      `frmts/hdf5`. Chunk decompression threads do not call libhdf5. The lock is separate from
+      the HDF5 driver's: a process using both drivers from different threads on a
+      non-thread-safe libhdf5 is still unprotected (sharing the lock is one argument for the
+      HDF5-subdriver option). The autotest passes with the lock forced on and with the run-time
+      default (lock off: the libhdf5 of the test environment is thread-safe).
+- [x] `NISAR_EXPORT_ZARR` no longer writes to `/tmp`: the Kerchunk sidecar goes to the directory
+      given by the new `NISAR_EXPORT_ZARR_DIR` config option, and nothing is written without it.
 - [ ] The `#if GDAL_VERSION_*` compatibility blocks (GDAL < 3.12 / < 3.13) are not needed
       in-tree; keep them only in the standalone copy, or drop them once the plugin requires a
       recent GDAL.
-- [ ] `DRIVER_VERSION` is only set by the standalone build (`NISAR_DRIVER_VERSION` defined in
-      `frmts/nisar/CMakeLists.txt`); in-tree builds do not report it.
+- [x] `DRIVER_VERSION` comes from `frmts/nisar/nisar_version.h` and is reported by in-tree
+      builds too (`v0.7.2`; the standalone plugin appends its build date).
+- [x] `NISAR:` connection strings whose file name contains a colon (`http://host:8080/x.h5`,
+      `C:/x.h5`) are parsed correctly; band reads and the Kerchunk export use the VSI path the
+      file was opened with.
+- [ ] Not built with MSVC or clang in-tree, and not run in GDAL's CI.
 - [ ] `versionadded:: 3.14` in `nisar.rst` is a guess; set it to the release the driver
       lands in.
 
@@ -126,3 +157,5 @@ These are not blocking for the standalone plugin, but GDAL reviewers will likely
 - [ ] The driver no longer sets `GDAL_HTTP_MAX_RETRY=5` when it is unset (a driver must not
       change global configuration). Users reading remote granules should set it themselves.
       Add this to the next release's notes and the HOWTO version history.
+- [ ] `NISAR_EXPORT_ZARR=YES` alone no longer writes `/tmp/nisar_kerchunk_*.json`; set
+      `NISAR_EXPORT_ZARR_DIR`. Listed in the HOWTO "unreleased" row; add to the release notes.

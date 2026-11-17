@@ -65,6 +65,7 @@ NisarRasterBand::NisarRasterBand(NisarDataset *poDSIn, int nBandIn)
     : GDALPamRasterBand(),  //Call base class construction
       hH5Type(-1)           //Initialize custom member
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Safety Check
     if (!poDSIn)
     {
@@ -295,6 +296,7 @@ NisarRasterBand::NisarRasterBand(NisarDataset *poDSIn, int nBandIn)
 
 NisarRasterBand::~NisarRasterBand()
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Close the cached HDF5 objects
     if (m_hMemSpaceID >= 0)
         H5Sclose(m_hMemSpaceID);
@@ -318,6 +320,7 @@ NisarRasterBand::~NisarRasterBand()
 
 void NisarRasterBand::MapChunks()
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     std::lock_guard<std::mutex> lock(m_oChunkMapMutex);
     if (m_bChunksMapped)
         return;  // Double-checked locking
@@ -381,23 +384,45 @@ void NisarRasterBand::MapChunks()
     // Fire the Iterator
     H5Dchunk_iter(poGDS->GetDatasetHandle(), H5P_DEFAULT, chunk_cb, &ctx);
 
-    // Opt-in Kerchunk Sidecar Generation
-    if (CPLTestBool(CPLGetConfigOption("NISAR_EXPORT_ZARR", "NO")))
+    // Opt-in Kerchunk sidecar generation, into a user-given directory
+    const char *pszZarrDir =
+        CPLGetConfigOption("NISAR_EXPORT_ZARR_DIR", nullptr);
+    const bool bHasZarrDir = pszZarrDir != nullptr && pszZarrDir[0] != '\0';
+    if (CPLTestBool(CPLGetConfigOption("NISAR_EXPORT_ZARR",
+                                       bHasZarrDir ? "YES" : "NO")))
     {
-        std::string osS3Url = GetStandardDatasetURI();
-        if (osS3Url.empty())
-            osS3Url = "file:///tmp/mock_nisar_dataset.h5";
+        if (!bHasZarrDir)
+        {
+            CPLError(CE_Warning, CPLE_AppDefined,
+                     "NISAR_EXPORT_ZARR is set but NISAR_EXPORT_ZARR_DIR is "
+                     "not: no Kerchunk sidecar written.");
+        }
+        else
+        {
+            std::string osS3Url = GetStandardDatasetURI();
+            if (osS3Url.empty())
+                osS3Url = GetRawVSIPath();
 
-        char szDatasetName[1024];
-        ssize_t len = H5Iget_name(poGDS->GetDatasetHandle(), szDatasetName,
-                                  sizeof(szDatasetName));
-        std::string osZarrGroup = (len > 0) ? szDatasetName : "unknown_dataset";
+            char szDatasetName[1024];
+            ssize_t len = H5Iget_name(poGDS->GetDatasetHandle(), szDatasetName,
+                                      sizeof(szDatasetName));
+            std::string osZarrGroup =
+                (len > 0) ? szDatasetName : "unknown_dataset";
 
-        std::string osSafeName = osZarrGroup;
-        std::replace(osSafeName.begin(), osSafeName.end(), '/', '_');
-        std::string osOutJson = "/tmp/nisar_kerchunk" + osSafeName + ".json";
+            std::string osSafeName = osZarrGroup;
+            std::replace(osSafeName.begin(), osSafeName.end(), '/', '_');
+            std::string osOutJson = pszZarrDir;
+            if (osOutJson.back() != '/' && osOutJson.back() != '\\')
+                osOutJson += '/';
+            osOutJson += "nisar_kerchunk" + osSafeName + ".json";
 
-        WriteVirtualZarrSidecar(osS3Url, osZarrGroup, m_aoAllChunks, osOutJson);
+            if (!WriteVirtualZarrSidecar(osS3Url, osZarrGroup, m_aoAllChunks,
+                                         osOutJson))
+            {
+                CPLError(CE_Warning, CPLE_FileIO,
+                         "Cannot write Kerchunk sidecar %s", osOutJson.c_str());
+            }
+        }
     }
 
     m_bChunksMapped = true;
@@ -405,106 +430,17 @@ void NisarRasterBand::MapChunks()
 
 std::string NisarRasterBand::GetRawVSIPath() const
 {
-    // Extracts the physical file path from the GDAL description
-    // Example Inputs:
-    // "NISAR:s3://bucket/file.h5:/path/to/data"
-    // "s3://bucket/file.h5"
-    std::string sDesc = poDS->GetDescription();
-
-    // 1. Strip "NISAR:" driver prefix
-    if (STARTS_WITH_CI(sDesc.c_str(), "NISAR:"))
-    {
-        sDesc = sDesc.substr(6);
-    }
-
-    // 2. Strip the HDF5 internal path suffix (e.g., ":/science/LSAR/...")
-    size_t nLastColon = sDesc.find_last_of(':');
-    if (nLastColon != std::string::npos)
-    {
-        // Ensure the colon isn't part of a URL scheme (s3://, http://, https://)
-        // We check if the colon is followed by "//"
-        bool bIsUrlScheme =
-            (sDesc.length() > nLastColon + 2 && sDesc[nLastColon + 1] == '/' &&
-             sDesc[nLastColon + 2] == '/');
-
-        if (!bIsUrlScheme)
-        {
-            sDesc = sDesc.substr(0, nLastColon);  // Chop off the HDF5 path
-        }
-    }
-
-    // 3. Strip surrounding quotes if GDAL added them
-    if (sDesc.length() >= 2 && sDesc.front() == '"' && sDesc.back() == '"')
-    {
-        sDesc = sDesc.substr(1, sDesc.length() - 2);
-    }
-
-    // ---------------------------------------------------------
-    // VSI Namespace Translation for VSIFOpenL
-    // ---------------------------------------------------------
-    // GDAL's VSIFOpenL requires /vsi... prefixes to route the I/O.
-    // We seamlessly translate standard URLs into VSI paths here.
-
-    if (STARTS_WITH_CI(sDesc.c_str(), "s3://"))
-    {
-        // Map "s3://bucket/file.h5" -> "/vsis3/bucket/file.h5"
-        sDesc = "/vsis3/" + sDesc.substr(5);
-    }
-    else if (STARTS_WITH_CI(sDesc.c_str(), "https://") ||
-             STARTS_WITH_CI(sDesc.c_str(), "http://"))
-    {
-        // Map "https://domain.com/file.h5" -> "/vsicurl/https://domain.com/file.h5"
-        // GDAL's vsicurl allows stacking the full URL after the prefix.
-        sDesc = "/vsicurl/" + sDesc;
-    }
-    // If it's already a /vsi... path or a local file path, leave it untouched.
-
-    return sDesc;
+    // Physical file, as a path VSIFOpenL() understands: s3:// and http(s)://
+    // names have been mapped to /vsis3/ and /vsicurl/ by NisarDataset::Open().
+    return static_cast<const NisarDataset *>(poDS)->m_osVSIPath;
 }
 
 std::string NisarRasterBand::GetStandardDatasetURI() const
 {
-    // Strategy 1: Check the parent dataset's primary description field
-    std::string sDesc = poDS->GetDescription();
-
-    // Strategy 2: Fallback to the band's own description if dataset is empty
-    if (sDesc.empty())
-    {
-        sDesc = GetDescription();
-    }
-
-    // If we found a string, strip the driver prefixes and subdataset hooks
-    if (!sDesc.empty())
-    {
-        // 1. Strip "NISAR:" driver prefix
-        if (STARTS_WITH_CI(sDesc.c_str(), "NISAR:"))
-        {
-            sDesc = sDesc.substr(6);
-        }
-
-        // 2. Strip the HDF5 internal path suffix (e.g., ":/science/LSAR/...")
-        size_t nLastColon = sDesc.find_last_of(':');
-        if (nLastColon != std::string::npos)
-        {
-            // Protect the colon in "s3://" or "https://" URL schemes
-            bool bIsUrlScheme =
-                (sDesc.length() > nLastColon + 2 &&
-                 sDesc[nLastColon + 1] == '/' && sDesc[nLastColon + 2] == '/');
-
-            if (!bIsUrlScheme)
-            {
-                sDesc = sDesc.substr(0, nLastColon);  // Chop off internal path
-            }
-        }
-
-        // 3. Clean up quotes
-        if (sDesc.length() >= 2 && sDesc.front() == '"' && sDesc.back() == '"')
-        {
-            sDesc = sDesc.substr(1, sDesc.length() - 2);
-        }
-    }
-
-    return sDesc;
+    // File name as given by the user, without the NISAR: prefix, the quotes
+    // and the HDF5 path.
+    const NisarDataset *poGDS = static_cast<const NisarDataset *>(poDS);
+    return poGDS->pszFilename ? poGDS->pszFilename : "";
 }
 
 bool NisarRasterBand::ProcessAndCopyChunk(const GByte *pSrcData,
@@ -843,6 +779,7 @@ int NisarRasterBand::GetMaskFlags()
 
 GDALRasterBand *NisarRasterBand::GetMaskBand()
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Return cached if exists
     if (m_poMaskBand)
         return m_poMaskBand;
@@ -1273,6 +1210,7 @@ NisarHDF5MaskBand::NisarHDF5MaskBand(NisarDataset *poDSIn, hid_t hMaskDS,
                                      NisarMaskType eType)
     : m_hMaskDS(hMaskDS), m_hMaskFileSpaceID(-1), m_eType(eType)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     this->poDS = poDSIn;
     this->nBand = 0;  // Mask bands usually have nBand=0
     this->eDataType = GDT_Byte;
@@ -1376,6 +1314,7 @@ double NisarRasterBand::GetMaximum(int *pbSuccess)
 
 NisarHDF5MaskBand::~NisarHDF5MaskBand()
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // CLEANLY RELEASE CACHED SPACE
     if (m_hMaskFileSpaceID >= 0)
     {
@@ -1392,6 +1331,7 @@ NisarHDF5MaskBand::~NisarHDF5MaskBand()
 CPLErr NisarHDF5MaskBand::IReadBlock(int nBlockXOff, int nBlockYOff,
                                      void *pImage)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     if (m_hMaskDS < 0 || m_hMaskFileSpaceID < 0)
         return CE_Failure;
 
@@ -1687,8 +1627,7 @@ bool NisarRasterBand::WriteVirtualZarrSidecar(
     VSILFILE *fp = VSIFOpenL(osOutJsonPath.c_str(), "wb");
     if (!fp)
         return false;
-    VSIFWriteL(osFinalJson.data(), 1, osFinalJson.size(), fp);
-    VSIFCloseL(fp);
-
-    return true;
+    const bool bOK = VSIFWriteL(osFinalJson.data(), 1, osFinalJson.size(),
+                                fp) == osFinalJson.size();
+    return VSIFCloseL(fp) == 0 && bOK;
 }

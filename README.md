@@ -189,7 +189,8 @@ These are GDAL *configuration options*: set them as environment variables, with
 | `NISAR_MAX_VIRTUAL_OVR` | `16` | Largest decimation factor for which a virtual overview is synthesised (powers of two up to this value). Set to `1` to disable virtual overviews. |
 | `NISAR_DUMP_MAX_ELEMENTS` | `64` | Largest value (in elements) printed in the `NISAR_DUMP` domain: scalar / 1-D datasets in `DUMP_MODE=FULL`, and attributes in either mode. Anything bigger is reported as `DATA { (N elements, not printed) }`. |
 | `NISAR_DUMP_MAX_STRING_CHARS` | `2048` | Longest string value (in UTF-8 code points; never split mid-character) printed in the `NISAR_DUMP` domain before truncation with `...`. Also bounds how much of a string *dataset* is read: fixed-length strings are read through a memory type of this size (×4 bytes for UTF-8), and a variable-length string array whose payload exceeds `elements × (4 × cap + 1)` bytes is not read at all (`(variable-length string, N bytes, not printed)`). Variable-length string *attributes* and *scalar* variable-length string datasets are read whole. |
-| `NISAR_EXPORT_ZARR` | `NO` | When `YES`, writes a Kerchunk-style JSON sidecar (`/tmp/nisar_kerchunk_<dataset>.json`) describing the HDF5 chunk map of the opened raster, for use with Zarr / xarray tooling. |
+| `NISAR_EXPORT_ZARR_DIR` | *(unset)* | Existing directory in which to write a Kerchunk-style JSON sidecar (`nisar_kerchunk_<hdf5 path with / replaced by _>.json`) describing the HDF5 chunk map of each opened raster, for use with Zarr / xarray tooling. Nothing is written unless this is set; there is no default location. |
+| `NISAR_EXPORT_ZARR` | `YES` when `NISAR_EXPORT_ZARR_DIR` is set, else `NO` | Set to `NO` to suppress the sidecar while keeping `NISAR_EXPORT_ZARR_DIR` set. `YES` without `NISAR_EXPORT_ZARR_DIR` only emits a warning. |
 | `GDAL_NUM_THREADS` | number of CPUs | Number of threads used to decompress chunks in parallel. `ALL_CPUS` or unset uses every hardware thread. |
 | `GDAL_HTTP_MAX_RETRY` | GDAL default | Number of retries GDAL performs on failed HTTP range requests. Setting it (e.g. `5`) makes long remote reads robust to transient S3 errors. |
 | `GDAL_CACHEMAX` | GDAL default | Size of GDAL's block cache. Increasing it (e.g. `2048` MB) helps when repeatedly reading large remote rasters. |
@@ -489,6 +490,7 @@ print("\n".join(dump.GetMetadata_List("NISAR_DUMP")))
 - **Block size = HDF5 chunk size.** Every `IReadBlock` maps exactly onto one HDF5 chunk, so no chunk is read twice. Read windows aligned to the chunk grid are fastest.
 - **Mega-fetch.** When a block is missing from the cache, the driver reads a rectangular grid of `NISAR_PREFETCH_GRID × NISAR_PREFETCH_GRID` chunks in one contiguous range request (capped by `NISAR_MAX_MEGAFETCH_BYTES`), decompresses them in parallel (`GDAL_NUM_THREADS`) and pushes all of them into the GDAL block cache. Keep the default `1` for interactive / tiled access; raise it (e.g. `24`) for full-scene batch jobs.
 - **HDF5 page buffer.** Files are opened with a 4 MiB HDF5 page buffer so metadata reads on remote files are served from a few large requests.
+- **Thread safety of libhdf5.** The driver only calls libhdf5 to open the file, read metadata and build the chunk map; pixel data is read through GDAL VSI and decompressed by the driver. Those libhdf5 calls are serialised by a global lock when `H5is_library_threadsafe()` reports a library built without thread safety. Build with `-DGDAL_ENABLE_HDF5_GLOBAL_LOCK=ON` / `OFF` to force the lock on or off (same switch as GDAL's HDF5 driver).
 - **HTTP retries.** Set `GDAL_HTTP_MAX_RETRY` (e.g. `5`) so transient S3 errors do not fail the read; the driver does not change it.
 - **Virtual overviews.** Overview levels are computed by decimating the full-resolution chunks; the cost is proportional to the number of chunks touched, so limit `NISAR_MAX_VIRTUAL_OVR` on very large products if zoomed-out views are slow.
 - **zlib-ng.** The conda package is built against `zlib-ng`, which decompresses DEFLATE chunks significantly faster than stock `zlib`.
@@ -538,6 +540,7 @@ Enable driver debug output with `CPL_DEBUG=NISAR_DRIVER` (or `CPL_DEBUG=ON` for 
 │   ├── CMakeLists.txt             Standalone plugin build: gdal_NISAR module (GDAL, HDF5, zlib-ng)
 │   ├── CMakeLists.gdal.txt        In-tree GDAL build (add_gdal_driver); copy to <gdal>/frmts/nisar/CMakeLists.txt
 │   ├── nisar.cpp                  GDALRegister_NISAR(): driver metadata and open options
+│   ├── nisar_version.h            NISAR_DRIVER_VERSION (reported as DRIVER_VERSION by standalone and in-tree builds)
 │   ├── nisardataset.{h,cpp}       NisarDataset: identification, path parsing, subdatasets, georeferencing, metadata
 │   ├── nisarrasterband.{h,cpp}    NisarRasterBand: chunk-aligned reads, mega-fetch, overviews, masks, Zarr sidecar
 │   ├── nisaroverviewband.h        Virtual overview band
@@ -581,8 +584,8 @@ The C++ sources are located in `frmts/nisar/` (the conda recipe uses
 
 ## License
 
-Copyright 2025, by the California Institute of Technology. ALL RIGHTS RESERVED. United States
-Government Sponsorship acknowledged. Released under the [Apache License 2.0](LICENSE).
+Copyright 2025, California Institute of Technology. All rights reserved. U.S. Government
+sponsorship acknowledged.
 
-This software may be subject to U.S. export control laws. By accepting this software, the user
-agrees to comply with all applicable U.S. export laws and regulations.
+Licensed under the [Apache License, Version 2.0](LICENSE). `frmts/nisar/hdf5vfl.{h,cpp}` derive
+from GDAL's HDF5 driver and additionally carry its MIT notice.

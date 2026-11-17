@@ -55,8 +55,8 @@ Before releasing, bump all of the following so that they match the package you a
 publish:
 
 - `version` (and reset `build: number`) in `conda-build/nisar-gdal-recipe/meta.yaml`
-- `project(VERSION ...)` in `frmts/nisar/CMakeLists.txt`, which becomes the `DRIVER_VERSION`
-  metadata item (shown by `gdalinfo --format NISAR`)
+- `NISAR_DRIVER_VERSION` in `frmts/nisar/nisar_version.h`, which becomes the `DRIVER_VERSION`
+  metadata item (shown by `gdalinfo --format NISAR`) and the CMake project version
 - the `test_driver_version` assertion in `conda-build/tests/test_interpolation_earthaccess.py`
   and the current-version references in `README.md`, `docs/HOWTO.md` (including the version
   history table) and `.agents/skills/nisar-gdal/SKILL.md` — these files are shipped inside the

@@ -1,5 +1,5 @@
-# Copyright 2025, by the California Institute of Technology.
-# ALL RIGHTS RESERVED. United States Government Sponsorship acknowledged.
+# Copyright 2025, California Institute of Technology.
+# All rights reserved. U.S. Government sponsorship acknowledged.
 #
 # SPDX-License-Identifier: Apache-2.0
 
