@@ -68,7 +68,7 @@ matched case-insensitively by GDAL; the canonical spelling is upper case.
 
 | Option | Values / default | Notes |
 |---|---|---|
-| `INST` | `LSAR` (default), `SSAR` | Instrument group under `/science`. |
+| `INST` | `LSAR`, `SSAR` (default: the granule's instrument) | Instrument group under `/science`. |
 | `FREQ` | `A` (default), `B` | Frequency B is absent from many granules and coarser. |
 | `POL` | product-dependent; default `HHHH` for GCOV, `HH` otherwise | Validated against `listOfCovarianceTerms` / `listOfPolarizations` in the file — an invalid value errors with the valid list. |
 | `METADATA` | `ALL` or comma list of `ATTITUDE`, `CALIBRATIONINFORMATION`, `CEOSANALYSISREADYDATA`, `ORBIT`, `PROCESSINGINFORMATION`, `RADARGRID`, `SOURCEDATA` | Loads the named `/metadata/<group>` trees into `NISAR_<NAME>` metadata domains. Pair with `gdalinfo -mdd all` (or `-mdd NISAR_ORBIT`) or you will not see them. |
@@ -184,6 +184,8 @@ from the product spec and must be confirmed against the subdataset list.
   are expected; a pixel size near 1 unit is not.
 - **GCOV**: best-exercised product. Its mask is also a raster in its own right
   (`grids/frequencyA/mask`); opened directly it gets NoData=255, category names and a colour table.
+  In some granules `mask` and `inputDataExceptionMask` are not chunked: block size is then one
+  full row, and the mega-fetch settings do not apply to them.
 - **GUNW / GOFF**: layers nest deeper (`grids/frequencyA/<layerGroup>/<pol>/<layer>`, e.g.
   `unwrappedInterferogram/HH/unwrappedPhase`, `pixelOffsets/HH/alongTrackOffset`). Address by full
   path only. Georeferencing is resolved by walking up to the frequency group, so it works at any

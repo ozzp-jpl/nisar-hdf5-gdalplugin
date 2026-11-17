@@ -157,7 +157,7 @@ argument of `gdal.OpenEx()` in Python.
 
 | Option | Type / values | Default | Description |
 | ------ | ------------- | ------- | ----------- |
-| `INST` | `LSAR`, `SSAR` | `LSAR` | Instrument group to open when no HDF5 path is given in the connection string. |
+| `INST` | `LSAR`, `SSAR` | the granule's instrument | Instrument group to open when no HDF5 path is given in the connection string. Defaults to the instrument found in the granule (`LSAR` if it holds both). |
 | `FREQ` | `A`, `B` | `A` | Frequency sub-band to open. |
 | `POL` | polarization, e.g. `HH`, `VV`, `HHHH` | `HH` (`HHHH` for GCOV) | Polarization / covariance term to open. Validated against the product's `listOfPolarizations` / `listOfCovarianceTerms`. Setting any of `INST`, `FREQ`, `POL` makes the driver open that single raster instead of the container. |
 | `METADATA` | `ALL` or a comma-separated list of `ATTITUDE`, `CALIBRATIONINFORMATION`, `CEOSANALYSISREADYDATA`, `ORBIT`, `PROCESSINGINFORMATION`, `RADARGRID`, `SOURCEDATA` | *(none)* | Loads the selected `/metadata/...` HDF5 groups and exposes them as GDAL metadata domains named `NISAR_<GROUP>` (e.g. `NISAR_ORBIT`). Off by default to keep `gdalinfo` fast. |
@@ -560,7 +560,7 @@ Enable driver debug output with `CPL_DEBUG=NISAR_DRIVER` (or `CPL_DEBUG=ON` for 
 - **`GDALRegister_NISAR()`** (`nisar.cpp`) creates the `GDALDriver`, declares the open-option list and wires `NisarDataset::Identify` / `NisarDataset::Open`.
 - **`NisarDataset`** (`GDALDataset` subclass) parses the connection string, rewrites `s3://` / `http(s)://` to `/vsis3/` / `/vsicurl/`, opens the file with `H5Fopen`, reads `/science/<INST>/identification` to classify the product, and either enumerates subdatasets (container mode) or opens one raster. For L2/L3 rasters it derives the SRS and GeoTransform from the coordinate vectors; for L1 rasters it builds GCPs from the `geolocationGrid`. Metadata groups are loaded lazily into `NISAR_*` domains on request.
 - **`NisarVFL`** (`hdf5vfl.cpp`) is a custom HDF5 Virtual File Layer driver. For remote files it is installed on the file-access property list so that every HDF5 read becomes a `VSIFReadL()` call, letting GDAL's VSI layer perform the HTTP range requests, caching, retries and authentication.
-- **`NisarRasterBand`** (`GDALRasterBand` subclass) reports the HDF5 chunk size as the GDAL block size, maps chunk offsets with `H5Dchunk_iter`, and implements `IReadBlock` as a coalesced "mega-fetch" of neighbouring chunks that are decompressed in parallel. It also creates virtual overview bands, exposes derived subdatasets for complex data, attaches `NisarHDF5MaskBand` when `MASK=YES`, and can emit a Kerchunk sidecar.
+- **`NisarRasterBand`** (`GDALRasterBand` subclass) reports the HDF5 chunk size as the GDAL block size, maps chunk offsets with `H5Dchunk_iter`, and implements `IReadBlock` as a coalesced "mega-fetch" of neighbouring chunks that are decompressed in parallel. Layers that are not chunked (contiguous or compact HDF5 layout, e.g. the GCOV `mask`) are read one row per block through libhdf5 and the VSI file layer instead. It also creates virtual overview bands, exposes derived subdatasets for complex data, attaches `NisarHDF5MaskBand` when `MASK=YES`, and can emit a Kerchunk sidecar.
 - **`NisarInterpolatedDataset`** wraps a coarse 3-D `radarGrid` cube and a DEM and produces a full-resolution interpolated raster when `QUANTITY` + `DEM_FILE` are given.
 
 The C++ sources are located in `frmts/nisar/` (the conda recipe uses

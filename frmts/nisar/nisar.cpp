@@ -74,7 +74,7 @@ void GDALRegister_NISAR()
     poDriver->SetMetadataItem(GDAL_DMD_OPENOPTIONLIST,
                               R"(<OpenOptionList>
                                   <Option name='ENABLE_PAGE_BUFFERING' type='boolean' description='Perform discovery pass to align HDF5 page buffering. (Note: Driver defaults to 4MB speculative alignment if NO)' default='NO'/>
-                                  <Option name='INST' type='string' description='Instrument to open' default='LSAR'/>
+                                  <Option name='INST' type='string' description='Instrument to open: LSAR or SSAR (default: the instrument of the granule)'/>
                                   <Option name='FREQ' type='string' description='Frequency band to open' default='A'/>
                                   <Option name='POL' type='string' description='Polarization to open (e.g., HHHH, HH)'/>
                                   <Option name='METADATA' type='string' description='Filter specific metadata domains to load'/>
