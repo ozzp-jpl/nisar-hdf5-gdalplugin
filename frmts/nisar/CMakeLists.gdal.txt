@@ -13,6 +13,7 @@ add_gdal_driver(TARGET gdal_NISAR
                         nisarinterpolatedrasterband.cpp
                         nisarinterpolatedrasterband.h
                         nisar_priv.h
+                        nisar_version.h
                         hdf5vfl.cpp
                         hdf5vfl.h
                 PLUGIN_CAPABLE_IF "NOT GDAL_USE_ZLIB_INTERNAL"
@@ -26,6 +27,17 @@ endif()
 gdal_standard_includes(gdal_NISAR)
 # nisarinterpolated.cpp includes vrtdataset.h
 target_include_directories(gdal_NISAR PRIVATE ${GDAL_RASTER_FORMAT_SOURCE_DIR}/vrt)
+
+# Global lock around libhdf5 calls. Same switch as GDAL's frmts/hdf5: ON/OFF
+# forces it; when unset, the driver asks libhdf5 at run time
+# (H5is_library_threadsafe(), see nisardataset.h).
+if (DEFINED GDAL_ENABLE_HDF5_GLOBAL_LOCK)
+  if (GDAL_ENABLE_HDF5_GLOBAL_LOCK)
+    target_compile_definitions(gdal_NISAR PRIVATE -DENABLE_HDF5_GLOBAL_LOCK)
+  else ()
+    target_compile_definitions(gdal_NISAR PRIVATE -DDISABLE_HDF5_GLOBAL_LOCK)
+  endif ()
+endif ()
 
 if (DEFINED HDF5_DEFINITIONS)
   target_compile_definitions(gdal_NISAR PRIVATE ${HDF5_DEFINITIONS})

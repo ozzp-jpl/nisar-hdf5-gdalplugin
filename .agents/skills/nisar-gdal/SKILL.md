@@ -43,8 +43,8 @@ NISAR:<file>[:<hdf5-dataset-path>]
   `NISAR:s3://bucket/x.h5` is a container, not a file + path). Double quotes around the whole
   `<file>` part are stripped: `NISAR:"s3://bucket/x.h5":/science/LSAR/GCOV/grids/frequencyA/HHHH`.
 - Read-only: opening with update access fails with "The NISAR driver only supports read access."
-- Without the `NISAR:` prefix a local file is still recognised (the driver probes for
-  `/science/LSAR|SSAR/identification`), but a **remote** file is only claimed if the URL contains
+- Without the `NISAR:` prefix a local file (or one under `/vsimem/`, `/vsizip/`, …) is still
+  recognised (the driver probes for `/science/LSAR|SSAR/identification`), but a **remote** file is only claimed if the URL contains
   the string `NISAR`. Which driver wins also depends on GDAL's driver order, so always use the
   prefix or `-if NISAR` in anything scripted.
 
@@ -346,7 +346,7 @@ reads remote files.
 | `NISAR_PREFETCH_GRID` | `1` | Side of the N×N grid of HDF5 chunks coalesced into one range request when a block misses the cache (1 = one chunk). Keep `1` for tiled/interactive access; raise (e.g. `24`) for full-scene batch reads. |
 | `NISAR_MAX_MEGAFETCH_BYTES` | `16777216` (16 MiB) | Upper bound on one coalesced "mega-fetch" range request. |
 | `NISAR_MAX_VIRTUAL_OVR` | `16` | Largest virtual overview decimation factor. |
-| `NISAR_EXPORT_ZARR` | `NO` | Write a kerchunk-style virtual Zarr sidecar JSON to `/tmp/nisar_kerchunk<dataset>.json` on first chunk map. Debug/interop only. |
+| `NISAR_EXPORT_ZARR_DIR` | *(unset)* | Existing directory in which to write a kerchunk-style virtual Zarr sidecar `nisar_kerchunk_<hdf5 path>.json` on first chunk map. Nothing is written when unset (no `/tmp` default). `NISAR_EXPORT_ZARR=NO` suppresses it. Debug/interop only. |
 | `GDAL_NUM_THREADS` | GDAL default | Parallel chunk decompression. `ALL_CPUS` is reasonable. |
 | `GDAL_HTTP_MAX_RETRY` | GDAL default | Retries on transient HTTP errors; `5` is a good value for S3. |
 | `GDAL_CACHEMAX` | GDAL default | GDAL block cache; raise for large translations. |

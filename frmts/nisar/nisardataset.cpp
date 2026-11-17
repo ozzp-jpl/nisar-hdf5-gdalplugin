@@ -50,6 +50,41 @@ static std::string NisarGetExtension(const char *pszFilename)
 #endif
 }
 
+std::recursive_mutex &NisarGetHDF5GlobalMutex()
+{
+    static std::recursive_mutex oMutex;
+    return oMutex;
+}
+
+bool NisarNeedsHDF5GlobalLock()
+{
+#if defined(ENABLE_HDF5_GLOBAL_LOCK)
+    return true;
+#elif defined(DISABLE_HDF5_GLOBAL_LOCK)
+    return false;
+#else
+    static const bool bNeeded = []()
+    {
+        hbool_t bThreadSafe = false;
+        const bool bLock =
+            H5is_library_threadsafe(&bThreadSafe) < 0 || !bThreadSafe;
+        CPLDebug("NISAR_DRIVER",
+                 "libhdf5 is %sthread-safe: global lock around HDF5 calls %s.",
+                 bLock ? "not " : "", bLock ? "enabled" : "disabled");
+        return bLock;
+    }();
+    return bNeeded;
+#endif
+}
+
+// Any GDAL virtual file system path (/vsimem/, /vsizip/, /vsicurl/, ...) is
+// read through the VSI Virtual File Layer; plain local paths keep the
+// default HDF5 driver.
+static bool NisarPathNeedsVFL(const char *pszPath)
+{
+    return STARTS_WITH(pszPath, "/vsi");
+}
+
 /**
  * \brief Helper function to read a 1D array of HDF5 strings.
  *
@@ -280,34 +315,40 @@ int NisarDataset::Identify(GDALOpenInfo *poOpenInfo)
         return FALSE;
     }
 
-    // Remote/Virtual Path Heuristics
-    // We avoid H5Fopen on remote files during Identify to prevent S3 Latency Tax.
-    bool bIsRemote = STARTS_WITH_CI(poOpenInfo->pszFilename, "s3://") ||
-                     STARTS_WITH_CI(poOpenInfo->pszFilename, "/vsis3/") ||
-                     STARTS_WITH_CI(poOpenInfo->pszFilename, "http");
-
-    if (bIsRemote)
+    // Network file systems: do not open the file with HDF5 during Identify
+    // (it costs several range requests); rely on the name instead.
+    if (STARTS_WITH_CI(poOpenInfo->pszFilename, "s3://") ||
+        STARTS_WITH_CI(poOpenInfo->pszFilename, "http") ||
+        !VSIIsLocal(poOpenInfo->pszFilename))
     {
-        // For remote files, we rely on the filename containing "NISAR"
-        // OR the extension being .h5 (which we verified in step 2 via header).
         CPLString osFilename = poOpenInfo->pszFilename;
         return (osFilename.ifind("NISAR") != std::string::npos);
     }
 
-    // Local File Deep Check
-    // Only perform this if we are certain it's HDF5 (Step 2) but need to
-    // verify it's NISAR-flavored.
+    // Local file systems, /vsimem/ and other non-network VSI paths: verify
+    // that the HDF5 file is NISAR-flavored.
+    NISAR_HDF5_GLOBAL_LOCK();
+
     H5E_auto2_t old_func;
     void *old_client_data;
     H5Eget_auto2(H5E_DEFAULT, &old_func, &old_client_data);
     H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
 
     bool bIsNisar = false;
-    hid_t hFile = H5Fopen(poOpenInfo->pszFilename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    hid_t hFapl = H5Pcreate(H5P_FILE_ACCESS);
+    if (NisarPathNeedsVFL(poOpenInfo->pszFilename))
+        H5Pset_driver(hFapl, NisarVFL::HDF5VFLGetFileDriver(), nullptr);
+    hid_t hFile = H5Fopen(poOpenInfo->pszFilename, H5F_ACC_RDONLY, hFapl);
+    H5Pclose(hFapl);
     if (hFile >= 0)
     {
-        if (H5Lexists(hFile, "/science/LSAR/identification", H5P_DEFAULT) > 0 ||
-            H5Lexists(hFile, "/science/SSAR/identification", H5P_DEFAULT) > 0)
+        if (H5Lexists(hFile, "/science", H5P_DEFAULT) > 0 &&
+            ((H5Lexists(hFile, "/science/LSAR", H5P_DEFAULT) > 0 &&
+              H5Lexists(hFile, "/science/LSAR/identification", H5P_DEFAULT) >
+                  0) ||
+             (H5Lexists(hFile, "/science/SSAR", H5P_DEFAULT) > 0 &&
+              H5Lexists(hFile, "/science/SSAR/identification", H5P_DEFAULT) >
+                  0)))
         {
             bIsNisar = true;
         }
@@ -1128,6 +1169,7 @@ char **NisarDataset::GetFileList()
 
 GDALDataType NisarDataset::GetGDALDataType(hid_t hH5Type)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Check Simple Native Types First
     // Use H5Tequal for robust comparison against predefined native types
     if (H5Tequal(hH5Type, H5T_NATIVE_FLOAT) > 0)
@@ -1381,6 +1423,7 @@ NisarDataset::NisarDataset()
 
 NisarDataset::~NisarDataset()
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Flush PAM cache first
     FlushCache(true);
 
@@ -1721,6 +1764,7 @@ cleanup:
 
 char **NisarDataset::GetMetadataDomainList()
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     CPLDebug("NISAR_DRIVER", "GetMetadataDomainList called");
     char **papszDomains = GDALPamDataset::GetMetadataDomainList();
     // The base class may already list some of these (e.g. SUBDATASETS when
@@ -1884,6 +1928,7 @@ cleanup:
 NisarMetadataList NisarDataset::GetMetadata(const char *pszDomain)
 
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Handle NISAR_GLOBAL Domain (Cached)
     if (pszDomain != nullptr && EQUAL(pszDomain, "NISAR_GLOBAL"))
     {
@@ -3394,6 +3439,7 @@ bool NisarDataset::LoadDumpMetadata()
 /************************************************************************/
 GDALDataset *NisarDataset::Open(GDALOpenInfo *poOpenInfo)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // ====================================================================
     // 3D INTERPOLATION ROUTING HOOK
     // Catch the QUANTITY option before any HDF5 or string parsing begins.
@@ -3442,33 +3488,57 @@ GDALDataset *NisarDataset::Open(GDALOpenInfo *poOpenInfo)
         return nullptr;
     }
 
-    const char *pszLastColon = strrchr(pszDataIdentifier, ':');
-    if (pszLastColon != nullptr && pszLastColon[1] == '/' &&
-        pszLastColon[2] == '/')
+    // NISAR:"filename":/hdf5/path, NISAR:filename:/hdf5/path, NISAR:filename
+    // or a plain filename. A colon inside the file name (URL scheme or port,
+    // Windows drive letter) is not a subdataset separator.
+    if (!bHasPrefix)
     {
         pszActualFilename = CPLStrdup(pszDataIdentifier);
-        pszSubdatasetPath = nullptr;
     }
-    else if (pszLastColon != nullptr)
+    else if (pszDataIdentifier[0] == '"' &&
+             strchr(pszDataIdentifier + 1, '"') != nullptr)
     {
-        pszSubdatasetPath = pszLastColon + 1;
-        size_t nFilenameLen = pszLastColon - pszDataIdentifier;
+        const char *pszEndQuote = strchr(pszDataIdentifier + 1, '"');
+        const size_t nFilenameLen = pszEndQuote - (pszDataIdentifier + 1);
         pszActualFilename = static_cast<char *>(CPLMalloc(nFilenameLen + 1));
-        strncpy(pszActualFilename, pszDataIdentifier, nFilenameLen);
+        memcpy(pszActualFilename, pszDataIdentifier + 1, nFilenameLen);
         pszActualFilename[nFilenameLen] = '\0';
+        if (pszEndQuote[1] == ':' && pszEndQuote[2] != '\0')
+            pszSubdatasetPath = pszEndQuote + 2;
     }
     else
     {
-        pszActualFilename = CPLStrdup(pszDataIdentifier);
-        pszSubdatasetPath = nullptr;
-    }
-
-    size_t nActualLen = strlen(pszActualFilename);
-    if (nActualLen >= 2 && pszActualFilename[0] == '"' &&
-        pszActualFilename[nActualLen - 1] == '"')
-    {
-        memmove(pszActualFilename, pszActualFilename + 1, nActualLen - 2);
-        pszActualFilename[nActualLen - 2] = '\0';
+        const char *pszLastColon = strrchr(pszDataIdentifier, ':');
+        bool bIsSeparator = false;
+        if (pszLastColon != nullptr && pszLastColon[1] != '\0')
+        {
+            const size_t nFilenameLen = pszLastColon - pszDataIdentifier;
+            const std::string osCandidate(pszDataIdentifier, nFilenameLen);
+            const bool bIsDriveLetter =
+                nFilenameLen == 1 &&
+                isalpha(static_cast<unsigned char>(pszDataIdentifier[0]));
+            if (pszLastColon[1] == '/')
+                // "://" is a URL scheme, "C:/" a drive letter
+                bIsSeparator = pszLastColon[2] != '/' && !bIsDriveLetter;
+            else
+                // Relative HDF5 path: only after a .h5 file name, so that
+                // "http://host:8080/x.h5" stays a file name.
+                bIsSeparator =
+                    EQUAL(NisarGetExtension(osCandidate.c_str()).c_str(), "h5");
+        }
+        if (bIsSeparator)
+        {
+            pszSubdatasetPath = pszLastColon + 1;
+            const size_t nFilenameLen = pszLastColon - pszDataIdentifier;
+            pszActualFilename =
+                static_cast<char *>(CPLMalloc(nFilenameLen + 1));
+            memcpy(pszActualFilename, pszDataIdentifier, nFilenameLen);
+            pszActualFilename[nFilenameLen] = '\0';
+        }
+        else
+        {
+            pszActualFilename = CPLStrdup(pszDataIdentifier);
+        }
     }
 
     // Mirror Identify(): an explicit NISAR: prefix claims the file whatever
@@ -3507,8 +3577,7 @@ GDALDataset *NisarDataset::Open(GDALOpenInfo *poOpenInfo)
         osNormalizedPath += pszActualFilename;
         bIsVSIL = true;
     }
-    else if (STARTS_WITH_CI(pszActualFilename, "/vsis3/") ||
-             STARTS_WITH_CI(pszActualFilename, "/vsicurl/"))
+    else if (NisarPathNeedsVFL(pszActualFilename))
     {
         osNormalizedPath = pszActualFilename;
         bIsVSIL = true;
@@ -3528,11 +3597,11 @@ GDALDataset *NisarDataset::Open(GDALOpenInfo *poOpenInfo)
 
     if (bIsVSIL)
     {
-        CPLDebug("NISAR_DRIVER", "Remote cloud file detected. Routing HDF5 "
-                                 "through GDAL VSIL VFL...");
+        CPLDebug("NISAR_DRIVER",
+                 "VSI path detected. Routing HDF5 through GDAL VSIL VFL...");
 
-        // Route HDF5 I/O directly into GDAL's /vsicurl/ layer!
-        // This gives HDF5 the illusion of the full 4.8 GB file, while GDAL handles the HTTP Range GETs.
+        // Route HDF5 I/O into GDAL's VSI layer (/vsicurl/ range requests,
+        // /vsimem/ buffers, ...).
         if (H5Pset_driver(fapl_id_base, NisarVFL::HDF5VFLGetFileDriver(),
                           NULL) < 0)
         {
@@ -3603,6 +3672,7 @@ GDALDataset *NisarDataset::Open(GDALOpenInfo *poOpenInfo)
     poDS->hHDF5 = hHDF5;
     poDS->pszFilename = pszActualFilename;
     pszActualFilename = nullptr;  // Ownership transferred
+    poDS->m_osVSIPath = osNormalizedPath;
 
     poDS->SetDescription(poOpenInfo->pszFilename);
     poDS->ReadIdentificationMetadata();
@@ -4329,6 +4399,7 @@ CPLErr NisarDataset::GetGeoTransform(double *padfTransform)
     oGT[4] = 0.0;
     oGT[5] = 1.0;
 #endif
+    NISAR_HDF5_GLOBAL_LOCK();
 
     // Check PAM (Persistent Aux Metadata) - Highest Priority
     // We must handle the parent call differently because the parent signature
@@ -4576,6 +4647,7 @@ CPLErr NisarDataset::GetGeoTransform(double *padfTransform)
 //------------------------------------------------------------------------------
 const OGRSpatialReference *NisarDataset::GetSpatialRef() const
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // Use Mutex Holder for RAII-style locking
     // It acquires lock on construction, releases on destruction (end of scope)
     std::lock_guard<std::mutex> lock(
@@ -5047,6 +5119,7 @@ cleanup:
 std::string NisarFindGroupUpward(hid_t hFile, const std::string &sPath,
                                  const std::vector<const char *> &apszNames)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     H5E_auto2_t old_func;
     void *old_client_data;
     H5Eget_auto2(H5E_DEFAULT, &old_func, &old_client_data);
@@ -5082,6 +5155,7 @@ CPLErr
 NisarDataset::GenerateGCPsFromGeolocationGrid(const char *pszProductGroup,
                                               const char *pszRasterPath)
 {
+    NISAR_HDF5_GLOBAL_LOCK();
     // DECLARE ALL VARIABLES AT THE TOP
     CPLErr eErr = CE_Failure;
     hid_t hGridGroup = -1;

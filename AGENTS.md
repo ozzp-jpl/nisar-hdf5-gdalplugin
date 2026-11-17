@@ -15,7 +15,7 @@ recipe builds from there:
 
 ```
 frmts/nisar/
-  nisar.cpp                         GDALRegister_NISAR(): driver metadata, DRIVER_VERSION (standalone only), open-option list
+  nisar.cpp                         GDALRegister_NISAR(): driver metadata, DRIVER_VERSION, open-option list
   nisardataset.{h,cpp}              NisarDataset: connection-string parsing, product identification,
                                     subdatasets, L1 GCPs / L2-L3 GeoTransform+SRS, metadata domains
   nisarrasterband.{h,cpp}           NisarRasterBand: chunk-aligned IReadBlock, "mega-fetch", overviews,
@@ -24,7 +24,8 @@ frmts/nisar/
   nisarinterpolated*.{h,cpp}        NisarInterpolatedDataset/RasterBand: 3-D metadata-cube + DEM interpolation
   hdf5vfl.{h,cpp}                   HDF5 Virtual File Layer driver routing all HDF5 I/O through GDAL VSI
   nisar_priv.h                      Private helpers, mask decoding, HDF5 iteration callbacks
-  CMakeLists.txt                    Standalone plugin build (gdal_NISAR MODULE; defines NISAR_DRIVER_VERSION)
+  nisar_version.h                   NISAR_DRIVER_VERSION, shared by the standalone and in-tree builds
+  CMakeLists.txt                    Standalone plugin build (gdal_NISAR MODULE; defines NISAR_STANDALONE_PLUGIN)
   CMakeLists.gdal.txt               In-tree GDAL build (add_gdal_driver); copy to <gdal>/frmts/nisar/CMakeLists.txt
 conda-build/nisar-gdal-recipe/      build.sh, meta.yaml (source: path ../../frmts/nisar), conda_build_config.yaml
 conda-build/tests/                  pytest suite + shell/diagnostic scripts (see Testing)
@@ -99,7 +100,7 @@ Notes:
 - `-p no:cacheprovider` keeps `.pytest_cache` out of the tree; also delete
   `conda-build/tests/__pycache__` before committing.
 - `test_driver_version` asserts the exact `DRIVER_VERSION` prefix — update it together with
-  `project(VERSION ...)` in `frmts/nisar/CMakeLists.txt` and `meta.yaml` when bumping the version.
+  `NISAR_DRIVER_VERSION` in `frmts/nisar/nisar_version.h` and `meta.yaml` when bumping the version.
 - `conda-build/tests/run_tests_NISAR_GSLC.sh` (end-to-end + benchmark against an S3 GSLC) and
   `verify_hdf5_ros3.py` (h5py/ROS3 diagnostic, unrelated to how this driver reads remote files)
   need AWS credentials and are not part of the routine loop.
@@ -131,7 +132,7 @@ Match the surrounding style instead of reformatting:
   Apache-2.0`, in the style of GDAL's `frmts/mrf` Caltech header); copy it into new files
   verbatim. `hdf5vfl.{h,cpp}` additionally keep the MIT notice of the GDAL code they derive
   from. The former export-control / commercial-negotiation header must not be reintroduced
-  (see `UPSTREAM_CHECKLIST.md` for the pending legal sign-off).
+  (see `UPSTREAM_CHECKLIST.md` for the licensing items still open upstream).
 - Python test code follows plain PEP 8 (numpy + `osgeo.gdal`, `gdal.UseExceptions()`) and starts
   with the short Caltech copyright + `SPDX-License-Identifier: Apache-2.0` comment block used in
   `conda-build/tests/test_dump.py`.
@@ -143,6 +144,12 @@ Match the surrounding style instead of reformatting:
   (`H5Dclose`, `H5Gclose`, `H5Sclose`, `H5Tclose`, `H5Pclose`, `H5Aclose`). Leaked handles
   keep remote files open and surface as confusing errors at `H5Fclose` time. Follow the existing
   RAII/early-close patterns in `nisardataset.cpp`.
+- **HDF5 global lock.** libhdf5 may not be thread-safe. Every method that reaches libhdf5 from
+  outside the driver (`Identify`, `Open`, `GetMetadata`, `GetSpatialRef`, `GetGeoTransform`,
+  `GetMaskBand`, `MapChunks`, constructors/destructors holding HDF5 handles, …) starts with
+  `NISAR_HDF5_GLOBAL_LOCK();` (`nisardataset.h`; recursive, so internal helpers and HDF5
+  callbacks do not take it). The chunk decompression threads in `IReadBlock` must not call
+  libhdf5.
 - **Remote I/O goes through GDAL VSI**, not HDF5's ROS3 VFD. `hdf5vfl.cpp` turns each HDF5
   read into `VSIFReadL`; `s3://` → `/vsis3/`, `http(s)://` → `/vsicurl/`. Do not add
   AWS/HTTP-specific code paths — set GDAL config options instead (`GDAL_HTTP_*`, `AWS_*`).
@@ -166,8 +173,8 @@ Match the surrounding style instead of reformatting:
 - **Mask semantics** live in `nisar_priv.h` / `nisarrasterband.cpp`: GUNW byte encodes
   reference/secondary sub-swath digits; all other products treat values 1–5 as valid.
   `MASK` defaults to `NO`.
-- **Version bump** = three places: `version`/`build number` in `meta.yaml`, `project(VERSION ...)`
-  in `frmts/nisar/CMakeLists.txt` (becomes `DRIVER_VERSION`), and the assertion in `test_interpolation_earthaccess.py::test_driver_version`
+- **Version bump** = three places: `version`/`build number` in `meta.yaml`, `NISAR_DRIVER_VERSION`
+  in `frmts/nisar/nisar_version.h` (becomes `DRIVER_VERSION`), and the assertion in `test_interpolation_earthaccess.py::test_driver_version`
   (plus the current-version lines in the skill file and `docs/HOWTO.md`, including its version
   history table, and the release line in `docs/AGENT_GUIDE.md`). README, HOWTO, AGENT_GUIDE and
   the skill file are installed by `build.sh` into the package under `share/doc/gdal-driver-nisar/`;
