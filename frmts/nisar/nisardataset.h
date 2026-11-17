@@ -65,6 +65,10 @@ using NisarMetadataList = char **;
 
 class NisarRasterBand;
 
+// Splits NISAR:"filename":/hdf5/path (or its unquoted form) into its parts.
+bool NisarSplitConnectionString(const char *pszInput, std::string &osFilename,
+                                std::string &osHDF5Path);
+
 // Serialises libhdf5 calls when the library is not thread-safe, as
 // HDF5_GLOBAL_LOCK() does in GDAL's frmts/hdf5. Taken at the top of every
 // entry point that reaches libhdf5 (the mutex is recursive, so helpers called

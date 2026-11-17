@@ -31,35 +31,6 @@
 #include "vrtdataset.h"
 #include "cpl_time.h"
 
-// Split "NISAR:<file>[:<hdf5-path>]" into its parts (same rules as NisarDataset::Open):
-// the last colon separates file and path unless it is followed by "//" (URL scheme).
-static bool NisarSplitConnectionString(const char *pszInput, std::string &sFile,
-                                       std::string &sPath)
-{
-    std::string s(pszInput);
-    if (STARTS_WITH_CI(s.c_str(), "NISAR:"))
-        s = s.substr(6);
-    if (s.empty())
-        return false;
-
-    sPath.clear();
-    const size_t nColon = s.rfind(':');
-    if (nColon != std::string::npos && s.compare(nColon, 3, "://") != 0)
-    {
-        sPath = s.substr(nColon + 1);
-        sFile = s.substr(0, nColon);
-    }
-    else
-    {
-        sFile = s;
-    }
-    if (sFile.size() >= 2 && sFile.front() == '"' && sFile.back() == '"')
-    {
-        sFile = sFile.substr(1, sFile.size() - 2);
-    }
-    return !sFile.empty();
-}
-
 static std::string NisarUpper(const char *psz)
 {
     std::string s(psz);
