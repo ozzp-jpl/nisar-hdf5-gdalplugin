@@ -3801,8 +3801,11 @@ GDALDataset *NisarDataset::Open(GDALOpenInfo *poOpenInfo)
 
         if (pszInst || pszFreq || pszPol)
         {
+            // Instrument detected from identification, unless INST is given
+            const std::string osDetectedInst =
+                poDS->m_sInst.empty() ? "LSAR" : poDS->m_sInst;
             if (pszInst == nullptr)
-                pszInst = "LSAR";
+                pszInst = osDetectedInst.c_str();
             if (pszFreq == nullptr)
                 pszFreq = "A";
 

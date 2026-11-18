@@ -116,6 +116,7 @@ NisarRasterBand::NisarRasterBand(NisarDataset *poDSIn, int nBandIn)
         H5D_layout_t layout = H5Pget_layout(dcpl_id);
         if (layout == H5D_CHUNKED)
         {
+            m_bIsChunked = true;
             int nFilters = H5Pget_nfilters(dcpl_id);
             for (int i = 0; i < nFilters; i++)
             {
@@ -873,6 +874,10 @@ CPLErr NisarRasterBand::IReadBlock(int nBlockXOff, int nBlockYOff, void *pImage)
         MapChunks();
     }
 
+    // Contiguous and compact layouts have no chunk map
+    if (!m_bIsChunked)
+        return ReadBlockWithHDF5(nBlockXOff, nBlockYOff, pImage);
+
     // We lock to ensure the network arrays build cleanly, but we will
     // manually drop this lock before we touch the GDAL Block Cache.
     std::unique_lock<std::mutex> oLock(m_oMegaFetchMutex);
@@ -1199,6 +1204,73 @@ CPLErr NisarRasterBand::IReadBlock(int nBlockXOff, int nBlockYOff, void *pImage)
     memset(pImage, 0,
            static_cast<size_t>(nBlockXSize) * nBlockYSize *
                GDALGetDataTypeSizeBytes(eDataType));
+    return CE_None;
+}
+
+// Block read through libhdf5 (and so through the VSI VFL), for the layouts
+// that are not made of chunks the driver can fetch by itself.
+CPLErr NisarRasterBand::ReadBlockWithHDF5(int nBlockXOff, int nBlockYOff,
+                                          void *pImage)
+{
+    NISAR_HDF5_GLOBAL_LOCK();
+    const NisarDataset *poGDS = static_cast<const NisarDataset *>(poDS);
+    const size_t nPixelSize =
+        static_cast<size_t>(GDALGetDataTypeSizeBytes(eDataType));
+    const int nRank = H5Sget_simple_extent_ndims(m_hFileSpaceID);
+    if (nRank < 2 || m_hMemSpaceID < 0 || hH5Type < 0)
+        return CE_Failure;
+
+    const hsize_t nXOff = static_cast<hsize_t>(nBlockXOff) * nBlockXSize;
+    const hsize_t nYOff = static_cast<hsize_t>(nBlockYOff) * nBlockYSize;
+    const hsize_t nReqXSize =
+        std::min<hsize_t>(nBlockXSize, nRasterXSize - nXOff);
+    const hsize_t nReqYSize =
+        std::min<hsize_t>(nBlockYSize, nRasterYSize - nYOff);
+
+    // Band along the first dimension of a 3-D dataset, as in the chunk map
+    std::vector<hsize_t> anOffset(nRank, 0);
+    std::vector<hsize_t> anCount(nRank, 1);
+    if (nRank == 3)
+        anOffset[0] = static_cast<hsize_t>(nBand - 1);
+    anOffset[nRank - 2] = nYOff;
+    anOffset[nRank - 1] = nXOff;
+    anCount[nRank - 2] = nReqYSize;
+    anCount[nRank - 1] = nReqXSize;
+    const std::vector<hsize_t> anMemOffset(nRank, 0);
+
+    const hid_t hMemType = H5Tget_native_type(hH5Type, H5T_DIR_ASCEND);
+    const hid_t hFileSpace = H5Scopy(m_hFileSpaceID);
+    const hid_t hMemSpace = H5Scopy(m_hMemSpaceID);
+
+    herr_t status = -1;
+    if (hMemType >= 0 && hFileSpace >= 0 && hMemSpace >= 0 &&
+        H5Tget_size(hMemType) == nPixelSize &&
+        H5Sselect_hyperslab(hFileSpace, H5S_SELECT_SET, anOffset.data(),
+                            nullptr, anCount.data(), nullptr) >= 0 &&
+        H5Sselect_hyperslab(hMemSpace, H5S_SELECT_SET, anMemOffset.data(),
+                            nullptr, anCount.data(), nullptr) >= 0)
+    {
+        // Edge blocks are only partly covered by the selection
+        memset(pImage, 0,
+               static_cast<size_t>(nBlockXSize) * nBlockYSize * nPixelSize);
+        status = H5Dread(poGDS->GetDatasetHandle(), hMemType, hMemSpace,
+                         hFileSpace, H5P_DEFAULT, pImage);
+    }
+
+    if (hMemSpace >= 0)
+        H5Sclose(hMemSpace);
+    if (hFileSpace >= 0)
+        H5Sclose(hFileSpace);
+    if (hMemType >= 0)
+        H5Tclose(hMemType);
+
+    if (status < 0)
+    {
+        CPLError(CE_Failure, CPLE_FileIO,
+                 "NISAR: cannot read block (%d, %d) of band %d", nBlockXOff,
+                 nBlockYOff, nBand);
+        return CE_Failure;
+    }
     return CE_None;
 }
 

@@ -65,6 +65,7 @@ class NisarRasterBand final : public GDALPamRasterBand
     hid_t m_hFileSpaceID = -1;  // Cached filespace for the HDF5 dataset
     hid_t m_hMemSpaceID = -1;   // Cached memory space for a full block
 
+    bool m_bIsChunked = false;
     bool m_bIsDeflated = false;
     int m_nDeflateLevel = 1;
     bool m_bIsShuffled = false;
@@ -90,6 +91,7 @@ class NisarRasterBand final : public GDALPamRasterBand
 
     bool ProcessAndCopyChunk(const GByte *pSrcData, size_t nSrcSize,
                              void *pDstData);
+    CPLErr ReadBlockWithHDF5(int nBlockXOff, int nBlockYOff, void *pImage);
     std::string GetRawVSIPath() const;
     std::string GetStandardDatasetURI() const;
 
