@@ -148,7 +148,7 @@ These are not blocking for the standalone plugin, but GDAL reviewers will likely
       in-tree; keep them only in the standalone copy, or drop them once the plugin requires a
       recent GDAL.
 - [x] `DRIVER_VERSION` comes from `frmts/nisar/nisar_version.h` and is reported by in-tree
-      builds too (`v0.7.2`; the standalone plugin appends its build date).
+      builds too (`v0.7.3`; the standalone plugin appends its build date).
 - [x] `NISAR:` connection strings whose file name contains a colon (`http://host:8080/x.h5`,
       `C:/x.h5`) are parsed correctly; band reads and the Kerchunk export use the VSI path the
       file was opened with.
@@ -162,4 +162,4 @@ These are not blocking for the standalone plugin, but GDAL reviewers will likely
       change global configuration). Users reading remote granules should set it themselves.
       Add this to the next release's notes and the HOWTO version history.
 - [ ] `NISAR_EXPORT_ZARR=YES` alone no longer writes `/tmp/nisar_kerchunk_*.json`; set
-      `NISAR_EXPORT_ZARR_DIR`. Listed in the HOWTO "unreleased" row; add to the release notes.
+      `NISAR_EXPORT_ZARR_DIR`. Listed in the HOWTO 0.7.3 row; add to the release notes.

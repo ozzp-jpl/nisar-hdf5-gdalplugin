@@ -18,7 +18,7 @@ The files that control the build are:
 | File | Role |
 | ---- | ---- |
 | `meta.yaml` | Package name, version, build number, build/host/run dependencies and the package test (`gdalinfo --formats \| grep NISAR`). The `run` dependencies are pinned to the `gdal`, `libgdal-core` and `hdf5` minor versions that were present at build time (`pin_compatible(..., max_pin='x.x')`). |
-| `conda_build_config.yaml` | Variant pins: GDAL version (`3.12`), Python version and compiler versions (clang 16 on macOS, GCC 12 on Linux). |
+| `conda_build_config.yaml` | Variant pins: GDAL versions (`3.12` and `3.13`; one package is built per version), Python version and compiler versions (clang 16 on macOS, GCC 12 on Linux). |
 | `build.sh` | Runs CMake with `$PREFIX` as prefix, builds with `make`, installs to `$PREFIX/lib/gdalplugins/` and verifies that `gdal_NISAR${SHLIB_EXT}` exists. Also copies `README.md`, `docs/HOWTO.md`, `docs/AGENT_GUIDE.md` and `.agents/skills/nisar-gdal/SKILL.md` (reached through `$RECIPE_DIR/../..`, since the recipe source is `frmts/nisar` only) to `$PREFIX/share/doc/gdal-driver-nisar/`; repository-relative links in the README are rewritten to the installed `HOWTO.md` or to GitHub so the offline copy has no dead links. |
 | `CMakeLists.txt` | Defines the `gdal_NISAR` MODULE target (C++17), links `GDAL::GDAL`, `HDF5::HDF5` and `zlib-ng` (falls back to `zlib` if `zlib-ng` is not found), and sets the `.dylib` suffix / no `lib` prefix required by GDAL plugins on macOS. |
 | `../../Dockerfile` (repository root) | Multi-arch AlmaLinux image with Miniconda, `conda-build`, `boa` and `conda-libmamba-solver`, used for the Linux builds. |

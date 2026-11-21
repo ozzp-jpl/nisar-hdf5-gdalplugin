@@ -1,7 +1,9 @@
 # recipe/conda_build_config.yaml
 
+# One package is built per GDAL minor version listed here.
 gdal:
   - "3.12"
+  - "3.13"
 
 python:
   - "3.12"

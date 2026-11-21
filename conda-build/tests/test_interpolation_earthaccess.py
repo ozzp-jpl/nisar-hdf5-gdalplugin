@@ -207,7 +207,7 @@ def _read_window(granules, ds):
 def test_driver_version():
     drv = gdal.GetDriverByName("NISAR")
     assert drv is not None
-    assert drv.GetMetadataItem("DRIVER_VERSION").startswith("v0.7.2")
+    assert drv.GetMetadataItem("DRIVER_VERSION").startswith("v0.7.3")
 
 
 def test_quantity_requires_dem(granules):
