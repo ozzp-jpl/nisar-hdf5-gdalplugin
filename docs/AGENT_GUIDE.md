@@ -9,7 +9,7 @@ NISAR HDF5 products (RSLC, RIFG, RUNW, GSLC, GCOV, GUNW, GOFF, SME2, radar-grid 
 cubes). It is not a Python package: there is nothing to import. Use the GDAL command-line tools
 (`gdalinfo`, `gdal_translate`, `gdalwarp`, `gdallocationinfo`) or `osgeo.gdal`.
 
-Current release: **0.7.2**, built against GDAL 3.12. Packages on `nisar-forge`: linux-64 and
+Current release: **0.7.3**, built for GDAL 3.12 and 3.13. Packages on `nisar-forge`: linux-64 and
 linux-aarch64 (osx-arm64 is available for 0.7.0; newer macOS builds are made natively, see
 `BUILDING.md`).
 

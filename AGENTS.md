@@ -39,7 +39,7 @@ Read `.agents/skills/nisar-gdal/SKILL.md` before writing or debugging any `gdali
 
 ## Development environment
 
-The dev environment is a conda/micromamba prefix at `~/nisar-env` (GDAL 3.12, HDF5, zlib-ng,
+The dev environment is a conda/micromamba prefix at `~/nisar-env` (GDAL 3.13, HDF5, zlib-ng,
 cmake, numpy, earthaccess, pytest). `GDAL_DRIVER_PATH` is set to
 `~/build:~/nisar-env/lib/gdalplugins`, so an out-of-tree build in `~/build` is picked up
 automatically. Nothing needs to be installed system-wide.
@@ -47,7 +47,7 @@ automatically. Nothing needs to be installed system-wide.
 If `~/nisar-env` is missing, recreate it:
 
 ```bash
-micromamba create -y -p ~/nisar-env -c conda-forge python=3.12 gdal=3.12 libgdal-core \
+micromamba create -y -p ~/nisar-env -c conda-forge python=3.12 gdal=3.13 libgdal-core \
     libgdal-hdf5 hdf5 zlib-ng cmake make cxx-compiler numpy earthaccess pytest
 export PATH="$HOME/nisar-env/bin:$PATH" GDAL_DRIVER_PATH="$HOME/build:$HOME/nisar-env/lib/gdalplugins" \
        PROJ_DATA="$HOME/nisar-env/share/proj"

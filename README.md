@@ -60,7 +60,7 @@ GDAL under the short name **`NISAR`**.
 
 | Component | Version | Notes |
 | --------- | ------- | ----- |
-| GDAL / `libgdal-core` | 3.12.x | The conda package is pinned to the GDAL minor version it was built against (see `conda-build/nisar-gdal-recipe/conda_build_config.yaml`). |
+| GDAL / `libgdal-core` | 3.12.x or 3.13.x | One package is built per GDAL minor version (see `conda-build/nisar-gdal-recipe/conda_build_config.yaml`); each is pinned to the GDAL minor version it was built against, and conda picks the one matching the GDAL in your environment. |
 | HDF5 | as pinned by the package (currently 2.x from conda-forge) | Pulled in automatically by conda; the recipe pins the run dependency to the HDF5 minor version it was built against. |
 | `zlib-ng` | any | Optional at build time; used for SIMD decompression when present. |
 | OS / arch | Linux x86_64, Linux aarch64, macOS arm64 | Windows is not supported by the recipe. |

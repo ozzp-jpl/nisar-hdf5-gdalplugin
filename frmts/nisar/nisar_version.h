@@ -24,6 +24,6 @@
 // Single source of the driver version: reported as DRIVER_VERSION by both the
 // in-tree GDAL build and the standalone plugin build (whose CMakeLists.txt
 // parses this file for project(VERSION ...)).
-#define NISAR_DRIVER_VERSION "0.7.2"
+#define NISAR_DRIVER_VERSION "0.7.3"
 
 #endif  // NISAR_VERSION_H
